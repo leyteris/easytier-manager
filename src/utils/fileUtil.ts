@@ -568,6 +568,18 @@ export const clearLogs = async () => {
   }
 }
 
+// 清空单个日志文件：macOS 下 core 以管理员权限运行，easytier.log 可能属于 root，
+// 普通用户无法直接写入；此时退化为删除文件（目录可写即可删除），下次运行由 core 重新创建。
+const clearLogFile = async (logsFile: string) => {
+  await checkDir(logsFile)
+  try {
+    await writeTextFile(logsFile, '', { baseDir: DATA_BASE_DIR })
+  } catch {
+    await remove(logsFile, { baseDir: DATA_BASE_DIR })
+    await writeTextFile(logsFile, '', { baseDir: DATA_BASE_DIR })
+  }
+}
+
 // 清空logs目录下 easytier 的日志文件
 // 内核实际始终写入固定文件名 easytier.log（多配置加载后 file_logger.file 不再生效），
 // 因此这里直接清空该文件，并顺带清掉内核滚动产生的 easytier.log.N，避免旧日志残留
@@ -579,11 +591,11 @@ export const clearETLogs = async (_fileName?: string) => {
       ? [`logs/${_fileName}.${date}`, `logs/${_fileName}.${date}.log`]
       : []
     for (const legacy of legacyFiles) {
-      await writeFileContent(legacy, '', { baseDir: DATA_BASE_DIR })
+      await clearLogFile(legacy)
     }
 
-    // 内核当前固定写入的日志文件
-    await writeFileContent('logs/easytier.log', '', { baseDir: DATA_BASE_DIR })
+    // 内核当前固定写入的日志文件（可能属于 root，clearLogFile 内含 EACCES 回退）
+    await clearLogFile('logs/easytier.log')
 
     // 清理滚动产生的 easytier.log.1 ~ easytier.log.N
     try {
