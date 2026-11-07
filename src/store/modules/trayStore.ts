@@ -156,17 +156,21 @@ export const useTrayStore = defineStore(
       }
       try {
         const menu = await Menu.new(menuItems)
+        const icon = await defaultWindowIcon()
         const options = {
           id: DEFAULT_TRAY_NAME,
-          title: pkg.displayName,
+          // 不设置 title：macOS 菜单栏会把它渲染成图标旁的文字，
+          // 这里只保留图标，应用名与版本号放在 tooltip 中
           tooltip: `${pkg.displayName}\n${pkg.version}`,
           menu,
           menuOnLeftClick: false,
-          action: trayEventHandler
+          action: trayEventHandler,
+          // 显式传入图标，避免仅移除 title 后托盘项没有可见内容
+          ...(icon ? { icon } : {})
         }
 
         tray = await TrayIcon.new(options)
-        tray.setIcon(await defaultWindowIcon())
+        if (icon) await tray.setIcon(icon)
         // await setTrayIcon(tray)
         await setTrayTooltip(undefined, tray)
         handleWindowClose()
