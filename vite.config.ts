@@ -1,6 +1,6 @@
 import { resolve } from 'path'
-import type { ConfigEnv, UserConfig } from 'vite'
-import { loadEnv } from 'vite'
+import { loadEnv, transformWithEsbuild } from 'vite'
+import type { ConfigEnv, Plugin, UserConfig } from 'vite'
 import Vue from '@vitejs/plugin-vue'
 import VueJsx from '@vitejs/plugin-vue-jsx'
 import progress from 'vite-plugin-progress'
@@ -17,6 +17,27 @@ import VueDevTools from 'vite-plugin-vue-devtools'
 
 // https://vitejs.dev/config/
 const root = process.cwd()
+
+// macOS 10.15 Catalina 的 WKWebView 为 Safari 13 内核。
+// Vite 的 build.target 不作用于 Monaco 等体积较大的 chunk 与 ?worker 产物，
+// 这里对最终 chunk 再做一次 esbuild 降级，确保没有 ??= / 类静态块等新语法。
+function safari13Transpile(): Plugin {
+  return {
+    name: 'safari13-transpile',
+    enforce: 'post',
+    async renderChunk(code, chunk) {
+      if (!chunk.fileName.endsWith('.js')) return null
+      const result = await transformWithEsbuild(code, chunk.fileName, {
+        loader: 'js',
+        target: 'safari13',
+        minifyWhitespace: true,
+        minifyIdentifiers: true,
+        minifySyntax: true
+      })
+      return { code: result.code, map: null }
+    }
+  }
+}
 
 function pathResolve(dir: string) {
   return resolve(root, '.', dir)
@@ -89,7 +110,8 @@ export default ({ command, mode }: ConfigEnv): UserConfig => {
       ViteEjsPlugin({
         title: env.VITE_APP_TITLE
       }),
-      UnoCSS()
+      UnoCSS(),
+      safari13Transpile()
     ],
 
     css: {
@@ -119,7 +141,9 @@ export default ({ command, mode }: ConfigEnv): UserConfig => {
       drop: env.VITE_DROP_DEBUGGER === 'true' ? ['debugger'] : undefined
     },
     build: {
-      target: 'ESNext',
+      // macOS 10.15 Catalina 的 WKWebView 为 Safari 13 内核，
+      // 不支持 ??= / ||= / 类静态块等较新语法，这里按 safari13 降级编译
+      target: ['safari13'],
       outDir: env.VITE_OUT_DIR || 'dist',
       assetsDir: 'assets',
       sourcemap: env.VITE_SOURCEMAP === 'true',
@@ -179,7 +203,8 @@ export default ({ command, mode }: ConfigEnv): UserConfig => {
       // cssTarget: ['chrome31']
     },
     worker: {
-      format: 'es'
+      format: 'es',
+      plugins: () => [safari13Transpile()]
     },
     server: {
       port: 4000,
