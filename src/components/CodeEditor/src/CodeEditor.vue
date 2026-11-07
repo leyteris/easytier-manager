@@ -55,21 +55,41 @@ const {
   changeTheme
 } = useMonacoEditor(props.language)
 
+const editorFailed = ref(false)
+
+const handleFallbackInput = (event: Event) => {
+  emits('update:modelValue', (event.target as HTMLTextAreaElement).value)
+}
+
 onMounted(() => {
-  const monacoEditor = createEditor(props)
-  updateMonacoVal(props.modelValue)
-  monacoEditor?.onDidChangeModelContent(() => {
-    emits('update:modelValue', monacoEditor!.getValue())
-  })
-  monacoEditor?.onDidBlurEditorText(() => {
-    emits('blur')
-  })
+  try {
+    const monacoEditor = createEditor(props)
+    if (!monacoEditor) throw new Error('Monaco editor instance was not created')
+    updateMonacoVal(props.modelValue)
+    monacoEditor.onDidChangeModelContent(() => {
+      emits('update:modelValue', monacoEditor.getValue())
+    })
+    monacoEditor.onDidBlurEditorText(() => {
+      emits('blur')
+    })
+  } catch (e: any) {
+    // 旧版 WebKit 上 Monaco 可能因缺少运行时 API 而初始化失败；
+    // 降级为纯文本编辑器，保证配置内容始终可见可编辑，同时把现场信息写入日志。
+    editorFailed.value = true
+    console.error('[CodeEditor] Monaco 初始化失败，已降级为纯文本编辑器:', e, {
+      ua: navigator.userAgent,
+      hasArrayAt: typeof Array.prototype.at,
+      hasFindLast: typeof Array.prototype.findLast,
+      hasObjectHasOwn: typeof Object.hasOwn,
+      containerHeight: (monacoEditorRef.value as HTMLElement | undefined)?.clientHeight
+    })
+  }
 })
 
 watch(
   () => props.modelValue,
   () => {
-    updateMonacoVal(props.modelValue)
+    if (!editorFailed.value) updateMonacoVal(props.modelValue)
   }
 )
 
@@ -121,5 +141,29 @@ defineExpose({ updateOptions })
       </ElSelect>
     </ElFormItem>
   </ElForm>
-  <div ref="monacoEditorRef" :style="monacoEditorStyle"></div>
+  <textarea
+    v-if="editorFailed"
+    class="code-editor-fallback"
+    :value="modelValue"
+    spellcheck="false"
+    :style="monacoEditorStyle"
+    @input="handleFallbackInput"
+    @blur="emits('blur')"
+  />
+  <div v-else ref="monacoEditorRef" :style="monacoEditorStyle"></div>
 </template>
+
+<style scoped>
+.code-editor-fallback {
+  padding: 10px;
+  font-family: Consolas, Monaco, 'Courier New', monospace;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #d4d4d4;
+  background: #1e1e1e;
+  border: none;
+  outline: none;
+  box-sizing: border-box;
+  resize: none;
+}
+</style>

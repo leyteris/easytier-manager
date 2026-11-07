@@ -5,6 +5,102 @@
     <link href="/favicon.ico" rel="icon" />
     <meta content="width=device-width, initial-scale=1.0" name="viewport" />
     <!-- <script src="https://unpkg.com/default-passive-events" type="text/javascript"></script> -->
+    <!--
+      兼容旧版 WebKit：macOS 11 的 WKWebView 可能没有 ES2022 的 Object.hasOwn，
+      smol-toml 解析与 Monaco 初始化都会因此抛错（表现为配置读取失败、编辑器空白、表单弹窗不弹）。
+      必须放在业务入口脚本之前执行。
+    -->
+    <script>
+      if (typeof Object.hasOwn !== 'function') {
+        Object.defineProperty(Object, 'hasOwn', {
+          value: function (target, property) {
+            return Object.prototype.hasOwnProperty.call(target, property)
+          },
+          configurable: true,
+          writable: true
+        })
+      }
+    </script>
+    <!--
+      继续兼容旧版 WebKit（JS 引擎低于 Safari 15.4）：
+      Monaco 0.55 在初始化/布局路径里直接调用 Array.prototype.at（languageService.js、standaloneLayoutService.js）
+      与 Array.prototype.findLast（括号匹配），缺失时会在 editor.create() 阶段抛错，表现为编辑器空白。
+    -->
+    <script>
+      if (typeof Array.prototype.at !== 'function') {
+        Object.defineProperty(Array.prototype, 'at', {
+          value: function (index) {
+            var len = this.length >>> 0
+            var i = Math.trunc(index) || 0
+            if (i < 0) i += len
+            return i < 0 || i >= len ? undefined : this[i]
+          },
+          configurable: true,
+          writable: true
+        })
+      }
+      if (typeof String.prototype.at !== 'function') {
+        Object.defineProperty(String.prototype, 'at', {
+          value: function (index) {
+            var str = String(this)
+            var i = Math.trunc(index) || 0
+            if (i < 0) i += str.length
+            return i < 0 || i >= str.length ? undefined : str.charAt(i)
+          },
+          configurable: true,
+          writable: true
+        })
+      }
+      if (typeof Array.prototype.findLast !== 'function') {
+        Object.defineProperty(Array.prototype, 'findLast', {
+          value: function (predicate, thisArg) {
+            for (var i = this.length - 1; i >= 0; i--) {
+              if (predicate.call(thisArg, this[i], i, this)) return this[i]
+            }
+            return undefined
+          },
+          configurable: true,
+          writable: true
+        })
+      }
+      if (typeof Array.prototype.findLastIndex !== 'function') {
+        Object.defineProperty(Array.prototype, 'findLastIndex', {
+          value: function (predicate, thisArg) {
+            for (var i = this.length - 1; i >= 0; i--) {
+              if (predicate.call(thisArg, this[i], i, this)) return i
+            }
+            return -1
+          },
+          configurable: true,
+          writable: true
+        })
+      }
+      // Monaco 的换行计算与 iframe 工具会直接 new WeakRef(...)
+      if (typeof window.WeakRef !== 'function') {
+        window.WeakRef = function (target) {
+          this.deref = function () {
+            return target
+          }
+        }
+      }
+      if (typeof String.prototype.replaceAll !== 'function') {
+        Object.defineProperty(String.prototype, 'replaceAll', {
+          value: function (search, replacement) {
+            var str = String(this)
+            if (search instanceof RegExp) {
+              if (!search.global) {
+                throw new TypeError('replaceAll must be called with a global RegExp')
+              }
+              return str.replace(search, replacement)
+            }
+            var escaped = String(search).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+            return str.replace(new RegExp(escaped, 'g'), replacement)
+          },
+          configurable: true,
+          writable: true
+        })
+      }
+    </script>
     <title><%= title %></title>
   </head>
   <body>
@@ -25,7 +121,6 @@
           top: 50%;
           left: 50%;
           display: flex;
-          transform: translate3d(-50%, -50%, 0);
           transform: translate3d(-50%, -50%, 0);
           justify-content: center;
           align-items: center;
@@ -80,11 +175,9 @@
         @keyframes loader-outter {
           0% {
             transform: rotate(0deg);
-            transform: rotate(0deg);
           }
 
           100% {
-            transform: rotate(360deg);
             transform: rotate(360deg);
           }
         }
@@ -92,11 +185,9 @@
         @keyframes loader-outter {
           0% {
             transform: rotate(0deg);
-            transform: rotate(0deg);
           }
 
           100% {
-            transform: rotate(360deg);
             transform: rotate(360deg);
           }
         }
@@ -104,11 +195,9 @@
         @keyframes loader-inner {
           0% {
             transform: rotate(0deg);
-            transform: rotate(0deg);
           }
 
           100% {
-            transform: rotate(-360deg);
             transform: rotate(-360deg);
           }
         }
@@ -116,11 +205,9 @@
         @keyframes loader-inner {
           0% {
             transform: rotate(0deg);
-            transform: rotate(0deg);
           }
 
           100% {
-            transform: rotate(-360deg);
             transform: rotate(-360deg);
           }
         }
