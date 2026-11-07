@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - codex/macos-local-build
+      - feat/macos-11-compat
 
 permissions:
   contents: read

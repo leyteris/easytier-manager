@@ -2,6 +2,9 @@ name: CI Pro Windows
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feat/macos-11-compat
 
 permissions: write-all
 env:
@@ -10,7 +13,7 @@ env:
 
 jobs:
   build:
-    if: contains('["xlc520"]', github.actor)
+    if: contains('["xlc520","leyteris"]', github.actor)
     permissions:
       contents: write
     runs-on: ${{ matrix.os }}
