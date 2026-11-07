@@ -80,7 +80,16 @@
     // 应用程序资源文件
     "resources": [
       "resource/*"
-    ]
+    ],
+    // macOS 相关打包配置
+    "macOS": {
+      // 最低系统版本：Intel(x86_64) 产物需支持 macOS 10.15 Catalina。
+      // 注意该字段只写入 Info.plist 的 LSMinimumSystemVersion，
+      // 二进制本身的 minos 由构建时的 MACOSX_DEPLOYMENT_TARGET 决定
+      // （见 src-tauri/.cargo/config.toml）；
+      // Apple Silicon 目标受 Rust 工具链限制，实际最低为 macOS 11.0。
+      "minimumSystemVersion": "10.15"
+    }
   },
   // 插件配置
   "plugins": {

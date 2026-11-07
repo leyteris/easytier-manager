@@ -1,4 +1,4 @@
-name: CI Pro MacOS ARM64
+name: CI Pro MacOS
 
 on:
   workflow_dispatch:
@@ -12,11 +12,26 @@ permissions:
 env:
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: short
+  # Intel 产物需在 macOS 10.15 Catalina 上运行；
+  # Apple Silicon 目标会被链接器钳制回架构下限 11.0。
+  MACOSX_DEPLOYMENT_TARGET: '10.15'
 
 jobs:
   build:
     runs-on: macos-14
-    timeout-minutes: 60
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            arch: arm64
+            lipo: arm64
+            minos: '11.0'
+          - target: x86_64-apple-darwin
+            arch: x64
+            lipo: x86_64
+            minos: '10.15'
 
     steps:
       - name: Checkout repository
@@ -35,12 +50,13 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          key: ${{ matrix.target }}
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
@@ -49,19 +65,19 @@ jobs:
         run: pnpm ts:check
 
       - name: Build application bundle
-        run: pnpm tauri build --target aarch64-apple-darwin --bundles app
+        run: pnpm tauri build --target ${{ matrix.target }} --bundles app
 
       - name: Ad-hoc sign and package DMG
         shell: bash
         run: |
           set -euo pipefail
-          app_path=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)
+          app_path=$(find src-tauri/target/${{ matrix.target }}/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)
           test -n "$app_path"
           codesign --force --deep --sign - "$app_path"
           codesign --verify --deep --strict --verbose=2 "$app_path"
 
           dmg_root="$RUNNER_TEMP/easytier-manager-dmg"
-          dmg_path="src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/easytier-manager-pro-aarch64.dmg"
+          dmg_path="src-tauri/target/${{ matrix.target }}/release/bundle/dmg/easytier-manager-pro-${{ matrix.arch }}.dmg"
           mkdir -p "$dmg_root" "$(dirname "$dmg_path")"
           cp -R "$app_path" "$dmg_root/"
           ln -s /Applications "$dmg_root/Applications"
@@ -71,7 +87,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          dmg_path=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)
+          dmg_path=$(find src-tauri/target/${{ matrix.target }}/release/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)
           mount_point="$RUNNER_TEMP/easytier-manager-mounted"
           mkdir -p "$mount_point"
           hdiutil attach "$dmg_path" -readonly -nobrowse -mountpoint "$mount_point"
@@ -79,14 +95,24 @@ jobs:
           app_path=$(find "$mount_point" -maxdepth 1 -name '*.app' -print -quit)
           test -n "$app_path"
           codesign --verify --deep --strict --verbose=2 "$app_path"
-          file "$app_path/Contents/MacOS/easytier-manager-pro" | grep -q 'arm64'
+
+          bin="$app_path/Contents/MacOS/easytier-manager-pro"
+          archs=$(lipo -archs "$bin")
+          minos=$(otool -l "$bin" | awk '/LC_BUILD_VERSION/{flag=1;next} flag && /minos/{print $2; exit}')
+          plist_min=$(plutil -extract LSMinimumSystemVersion raw "$app_path/Contents/Info.plist")
+
+          echo "archs=$archs minos=$minos LSMinimumSystemVersion=$plist_min"
+          test "$archs" = "${{ matrix.lipo }}"
+          test "$minos" = "${{ matrix.minos }}"
+          test "$plist_min" = "10.15"
+
           hdiutil detach "$mount_point"
           trap - EXIT
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
         with:
-          name: easytier-manager-pro-macos-arm64
-          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          name: easytier-manager-pro-macos-${{ matrix.arch }}
+          path: src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
           if-no-files-found: error
           retention-days: 14

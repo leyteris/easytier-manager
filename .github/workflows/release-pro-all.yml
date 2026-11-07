@@ -94,13 +94,29 @@ jobs:
           name: easytier-manager-pro-msi
           path: src-tauri/target/release/bundle/msi/*.msi
 
-  # macOS 构建（Apple Silicon DMG，ad-hoc 签名）
+  # macOS 构建（Intel x86_64 与 Apple Silicon DMG，ad-hoc 签名）
   build-macos:
     if: contains('["xlc520"]', github.actor)
     permissions:
       contents: write
     runs-on: macos-14
-    timeout-minutes: 60
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            arch: arm64
+            lipo: arm64
+            minos: '11.0'
+          - target: x86_64-apple-darwin
+            arch: x64
+            lipo: x86_64
+            minos: '10.15'
+    env:
+      # Intel 产物需在 macOS 10.15 Catalina 上运行；
+      # Apple Silicon 目标会被链接器钳制回架构下限 11.0。
+      MACOSX_DEPLOYMENT_TARGET: '10.15'
 
     steps:
       - name: Checkout repository
@@ -119,12 +135,13 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          key: ${{ matrix.target }}
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
@@ -135,31 +152,31 @@ jobs:
       - name: Build application bundle
         env:
           NODE_OPTIONS: "--max-old-space-size=8192"
-        run: pnpm tauri build --target aarch64-apple-darwin --bundles app
+        run: pnpm tauri build --target ${{ matrix.target }} --bundles app
 
       # Ad-hoc 签名并打包 DMG（无 Apple Developer ID，适合开发/本地分发验证）
       - name: Ad-hoc sign and package DMG
         shell: bash
         run: |
           set -euo pipefail
-          app_path=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)
+          app_path=$(find src-tauri/target/${{ matrix.target }}/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)
           test -n "$app_path"
           codesign --force --deep --sign - "$app_path"
           codesign --verify --deep --strict --verbose=2 "$app_path"
 
           dmg_root="$RUNNER_TEMP/easytier-manager-dmg"
-          dmg_path="src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/easytier-manager-pro-aarch64.dmg"
+          dmg_path="src-tauri/target/${{ matrix.target }}/release/bundle/dmg/easytier-manager-pro-${{ matrix.arch }}.dmg"
           mkdir -p "$dmg_root" "$(dirname "$dmg_path")"
           cp -R "$app_path" "$dmg_root/"
           ln -s /Applications "$dmg_root/Applications"
           hdiutil create -volname "EasyTier Manager Pro" -srcfolder "$dmg_root" -ov -format UDZO "$dmg_path"
 
-      # 校验打包后的 DMG：签名有效且为 arm64 架构
+      # 校验打包后的 DMG：签名有效、架构正确、minos 与 Info.plist 最低版本符合预期
       - name: Verify packaged DMG
         shell: bash
         run: |
           set -euo pipefail
-          dmg_path=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)
+          dmg_path=$(find src-tauri/target/${{ matrix.target }}/release/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)
           mount_point="$RUNNER_TEMP/easytier-manager-mounted"
           mkdir -p "$mount_point"
           hdiutil attach "$dmg_path" -readonly -nobrowse -mountpoint "$mount_point"
@@ -167,15 +184,25 @@ jobs:
           app_path=$(find "$mount_point" -maxdepth 1 -name '*.app' -print -quit)
           test -n "$app_path"
           codesign --verify --deep --strict --verbose=2 "$app_path"
-          file "$app_path/Contents/MacOS/easytier-manager-pro" | grep -q 'arm64'
+
+          bin="$app_path/Contents/MacOS/easytier-manager-pro"
+          archs=$(lipo -archs "$bin")
+          minos=$(otool -l "$bin" | awk '/LC_BUILD_VERSION/{flag=1;next} flag && /minos/{print $2; exit}')
+          plist_min=$(plutil -extract LSMinimumSystemVersion raw "$app_path/Contents/Info.plist")
+
+          echo "archs=$archs minos=$minos LSMinimumSystemVersion=$plist_min"
+          test "$archs" = "${{ matrix.lipo }}"
+          test "$minos" = "${{ matrix.minos }}"
+          test "$plist_min" = "10.15"
+
           hdiutil detach "$mount_point"
           trap - EXIT
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
         with:
-          name: easytier-manager-pro-macos-arm64
-          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          name: easytier-manager-pro-macos-${{ matrix.arch }}
+          path: src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
           if-no-files-found: error
           retention-days: 14
 
@@ -210,3 +237,4 @@ jobs:
             artifacts/easytier-manager-pro-setup/*.exe
             artifacts/easytier-manager-pro-msi/*.msi
             artifacts/easytier-manager-pro-macos-arm64/*.dmg
+            artifacts/easytier-manager-pro-macos-x64/*.dmg

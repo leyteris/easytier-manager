@@ -1,0 +1,11 @@
+# macOS 部署目标（deployment target）。
+#
+# Tauri v2 的 CLI 不会再把 bundle.macOS.minimumSystemVersion 注入
+# MACOSX_DEPLOYMENT_TARGET（v1 才有该行为），因此这里显式声明，
+# 让 rustc 按 macOS 10.15 编译并链接，Intel(x86_64) 产物才能在
+# Catalina 上运行。
+#
+# Apple Silicon 目标不受影响：链接器会把 arm64 的 minos 自动钳制
+# 回其架构下限 11.0。
+[env]
+MACOSX_DEPLOYMENT_TARGET = "10.15"
