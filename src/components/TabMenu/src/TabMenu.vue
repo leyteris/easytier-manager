@@ -12,6 +12,7 @@ import { cloneDeep } from 'lodash-es'
 import { filterMenusPath, initTabMap, tabPathMap } from './helper'
 import { useDesign } from '@/hooks/web/useDesign'
 import { isUrl } from '@/utils/is'
+import { arrangeNavigation } from '@/utils/navigation'
 // import { ClickOutside } from 'element-plus'
 
 const { getPrefixCls, variables } = useDesign()
@@ -25,7 +26,7 @@ const permissionStore = usePermissionStore()
 // computed
 const collapse = computed(() => appStore.getCollapse)
 const fixedMenu = computed(() => appStore.getFixedMenu)
-const routers = computed(() => permissionStore.routers)
+const routers = computed(() => arrangeNavigation(permissionStore.routers, appStore.navigation))
 const tabRouters = computed(() => unref(routers).filter((v) => !v?.meta?.hidden))
 
 // refs

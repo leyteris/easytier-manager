@@ -11,6 +11,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_log::{Target, TargetKind};
 use tauri_plugin_store::StoreExt;
+mod egress_ip;
 
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -133,11 +134,14 @@ struct CheckConfigResult {
     stderr: String,
 }
 
-/// 执行 `easytier-core --check-config` 并返回退出码与输出。
-/// --check-config 合法时静默退出 0、非法时静默退出 1，必须靠退出码区分，
-/// 因此不能复用只返回 stdout 的 run_cli。
+/// 校验配置并返回退出码；未提供配置路径时只读取内核帮助以识别能力。
 #[tauri::command]
-fn check_config(app: AppHandle, program: String, config_path: String) -> CheckConfigResult {
+fn check_config(
+    app: AppHandle,
+    program: String,
+    config_path: Option<String>,
+    process_args: Option<Vec<String>>,
+) -> CheckConfigResult {
     #[cfg(target_os = "macos")]
     let program = match (|| -> Result<String, String> {
         let data_dir = app
@@ -168,10 +172,15 @@ fn check_config(app: AppHandle, program: String, config_path: String) -> CheckCo
     #[cfg(not(target_os = "macos"))]
     let _ = app;
 
-    match command_output(
-        &program,
-        &["--check-config".to_string(), "-c".to_string(), config_path],
-    ) {
+    let args = match config_path {
+        Some(path) => {
+            let mut args = vec!["--check-config".to_string(), "-c".to_string(), path];
+            args.extend(process_args.unwrap_or_default());
+            args
+        }
+        None => vec!["--help".to_string()],
+    };
+    match command_output(&program, &args) {
         Ok(output) => CheckConfigResult {
             code: output.status.code().unwrap_or(-1),
             stdout: String::from_utf8_lossy(&output.stdout).to_string(),
@@ -381,6 +390,7 @@ fn run_osascript(lines: &[&str], args: &[String]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+/// 通过系统授权启动受管理内核，将附加进程参数逐个安全引用。
 #[tauri::command]
 fn start_core_macos(
     app: AppHandle,
@@ -389,10 +399,13 @@ fn start_core_macos(
     rpc_portal: Option<String>,
     log_size: Option<u32>,
     log_count: Option<u32>,
+    process_args: Option<Vec<String>>,
 ) -> Result<u32, String> {
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (app, config_file_name, log_level, rpc_portal, log_size, log_count);
+        let _ = (
+            app, config_file_name, log_level, rpc_portal, log_size, log_count, process_args,
+        );
         return Err("macOS elevated launch is unavailable on this platform".to_string());
     }
     #[cfg(target_os = "macos")]
@@ -413,7 +426,7 @@ fn start_core_macos(
         ) {
             return Err("invalid log level".to_string());
         }
-        let args = vec![
+        let mut args = vec![
             core.to_string_lossy().to_string(),
             logs.to_string_lossy().to_string(),
             log_level,
@@ -422,6 +435,7 @@ fn start_core_macos(
             log_size.map(|v| v.to_string()).unwrap_or_default(),
             log_count.map(|v| v.to_string()).unwrap_or_default(),
         ];
+        args.extend(process_args.unwrap_or_default());
         let output = run_osascript(
             &[
                 "on run argv",
@@ -437,6 +451,9 @@ fn start_core_macos(
                 "if logSize is not \"\" then set commandLine to commandLine & \" --file-log-size \" & logSize",
                 "if logCount is not \"\" then set commandLine to commandLine & \" --file-log-count \" & logCount",
                 "if rpcPortal is not \"\" then set commandLine to commandLine & \" --rpc-portal \" & quoted form of rpcPortal",
+                "repeat with i from 8 to count of argv",
+                "set commandLine to commandLine & \" \" & quoted form of item i of argv",
+                "end repeat",
                 "return do shell script commandLine & \" >/dev/null 2>&1 & echo $!\" with administrator privileges",
                 "end run",
             ],
@@ -617,12 +634,14 @@ fn show_window(app: &AppHandle) {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// 注册桌面能力并创建主窗口，内置 UI 资源不进入浏览器 HTTP 缓存。
 pub fn run() {
     let mut builder = tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             run_command,
             run_cli,
             check_config,
+            egress_ip::query_egress_ip,
             install_core_archive,
             start_core_macos,
             stop_core_macos,
@@ -683,6 +702,17 @@ pub fn run() {
 
     app_builder
         .setup(|app| {
+            // 保留窗口尺寸、平台参数等配置，仅为内置资源补充缓存策略。
+            // 升级后的入口和资源始终从当前安装包读取，用户本地设置不受影响。
+            let window_config = app.config().app.windows.first().ok_or("主窗口配置缺失")?;
+            tauri::WebviewWindowBuilder::from_config(app, window_config)?
+                .on_web_resource_request(|_request, response| {
+                    response.headers_mut().insert(
+                        tauri::http::header::CACHE_CONTROL,
+                        tauri::http::HeaderValue::from_static("no-store, no-cache, must-revalidate"),
+                    );
+                })
+                .build()?;
             tauri::async_runtime::block_on(async {
                 match app.store("cold_start.store") {
                     Ok(store) => {

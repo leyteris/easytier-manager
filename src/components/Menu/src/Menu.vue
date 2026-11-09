@@ -7,6 +7,7 @@ import { useRenderMenuItem } from './components/useRenderMenuItem'
 import { useRouter } from 'vue-router'
 import { isUrl } from '@/utils/is'
 import { useDesign } from '@/hooks/web/useDesign'
+import { arrangeNavigation } from '@/utils/navigation'
 
 const { getPrefixCls } = useDesign()
 
@@ -20,6 +21,7 @@ export default defineComponent({
       default: undefined
     }
   },
+  /** 根据布局渲染同一套导航偏好，子菜单继续保留原有层级。 */
   setup(props) {
     const appStore = useAppStore()
 
@@ -42,7 +44,9 @@ export default defineComponent({
 
     const routers = computed(() =>
       // @ts-ignore
-      unref(layout) === 'cutMenu' ? permissionStore.getMenuTabRouters : permissionStore.getRouters
+      unref(layout) === 'cutMenu'
+        ? permissionStore.menuTabRouters
+        : arrangeNavigation(permissionStore.routers, appStore.navigation)
     )
 
     const collapse = computed(() => appStore.getCollapse)

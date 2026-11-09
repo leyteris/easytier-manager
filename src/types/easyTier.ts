@@ -28,11 +28,13 @@ interface NetworkConfig {
   allow: string[]
 }
 
+/** 文件日志偏好由管理器转换为进程参数，兼容新旧大小字段。 */
 interface FileLoggerConfig {
   level: string | null
   file: string | null
   dir: string | null
   size?: number // 单个日志文件大小，单位 MB，默认 100
+  size_mb?: number
   count?: number // 最大日志文件数量，默认 10
 }
 
@@ -40,9 +42,13 @@ interface ConsoleLoggerConfig {
   level: string | null
 }
 
+/** WireGuard 门户兼容旧地址池及新版具名客户端。 */
 interface VpnPortalConfig {
-  client_cidr: string
+  client_cidr?: string
   wireguard_listen: string
+  enabled?: boolean
+  wireguard_private_key?: string
+  clients?: { name: string; virtual_ip: string; groups?: string[] }[]
 }
 
 /** 端口转发规则 */
@@ -106,7 +112,11 @@ interface AclConfig {
   acl_v1: AclV1
 }
 
+/** 内核实例开关，旧界面别名只用于兼容读取。 */
 interface Flags {
+  socket_mark?: number
+  prefer_peer_relay?: boolean
+  disable_relay_data?: boolean
   default_protocol: string
   dev_name: string
   enable_encryption: boolean
@@ -155,7 +165,9 @@ interface Flags {
   ipv6_listener: string
 }
 
+/** 实例 TOML 配置，保留旧配置可选字段以兼容导入。 */
 interface EasyTierConfig {
+  manager_runtime?: { shared_runtime?: boolean; state_dir?: string }
   netns: string
   hostname: string
   instance_name: string
@@ -163,7 +175,13 @@ interface EasyTierConfig {
   machine_id?: string // 机器 ID
   ipv4: string
   ipv6?: string // IPv6 地址
-  dhcp: boolean
+  dhcp: boolean | string
+  dhcpv6?: boolean | string
+  tcp_stun_servers?: string[]
+  secure_mode?: { enabled?: boolean; local_private_key?: string; local_public_key?: string }
+  ipv6_public_addr_provider?: boolean
+  ipv6_public_addr_auto?: boolean
+  ipv6_public_addr_prefix?: string
   network_identity: NetworkIdentity
   listeners: string
   exit_nodes: string[]

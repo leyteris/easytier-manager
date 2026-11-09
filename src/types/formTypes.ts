@@ -15,7 +15,9 @@ interface ConsoleLogger {
   level: string
 }
 
+/** 保留新旧日志大小字段的表单模型。 */
 interface FileLogger {
+  size_mb?: number
   level?: string | undefined
   file?: string | undefined | null
   dir?: string | undefined | null
@@ -23,7 +25,11 @@ interface FileLogger {
   count?: number | undefined
 }
 
+/** 内核功能开关及兼容旧字段的表单模型。 */
 interface Flags {
+  socket_mark?: number
+  prefer_peer_relay?: boolean
+  disable_relay_data?: boolean
   default_protocol: string
   dev_name: string
   data_compress_algo: string
@@ -73,12 +79,20 @@ interface Flags {
   tld_dns_zone?: string | undefined // TLD DNS 区域
 }
 
+/** 新旧配置共用表单，未启用的新功能保持省略。 */
 export interface EasyTierFormData {
+  manager_runtime?: { shared_runtime?: boolean; state_dir?: string }
   hostname?: string | undefined | null
   instance_name?: string | undefined
   machine_id?: string | undefined // 机器 ID，用于 Web 配置服务器识别
   network_identity: Partial<NetworkIdentity> | undefined
-  dhcp?: boolean | undefined
+  dhcp?: boolean | string
+  dhcpv6?: boolean | string
+  tcp_stun_servers?: string[]
+  secure_mode?: { enabled?: boolean; local_private_key?: string; local_public_key?: string }
+  ipv6_public_addr_provider?: boolean
+  ipv6_public_addr_auto?: boolean
+  ipv6_public_addr_prefix?: string
   ipv4?: string | undefined
   ipv6?: string | undefined // IPv6 地址
   peer: Partial<Peer>[] | undefined | null

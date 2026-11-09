@@ -12,7 +12,8 @@ import {
   readFileContent,
   resolveWebConsoleDbPath
 } from './fileUtil'
-import { checkConfigFile } from './configCheckUtil'
+import { prepareConfigForRun } from './configCheckUtil'
+import { coreProcessArgs } from './coreConfigCompat'
 import { normalizeRpcPortal } from './rpcPortal'
 import { extractConfigNameFromPath, parseCoreCommandLine } from './coreProcess'
 import { getPlatform, sleep } from './sysUtil'
@@ -47,6 +48,7 @@ async function getConfigFromFile(configFileName: string): Promise<{
   logSize: number | undefined
   logCount: number | undefined
   rpcPortal: string | undefined
+  processArgs: string[]
 }> {
   try {
     // 读取配置文件内容
@@ -57,12 +59,12 @@ async function getConfigFromFile(configFileName: string): Promise<{
     const logDir = config.file_logger?.dir || './log'
     const logLevel = config.file_logger?.level || 'info'
     // 日志滚动限制：未配置时不传参，交由内核使用默认值（100MB / 10 个）
-    const logSize = toPositiveInt(config.file_logger?.size)
+    const logSize = toPositiveInt(config.file_logger?.size_mb ?? config.file_logger?.size)
     const logCount = toPositiveInt(config.file_logger?.count)
     // 获取 rpc_portal 配置（v2.5.0 起配置文件中的 rpc_portal 不再生效，需通过命令行参数传递）
     const rpcPortal = config.rpc_portal || undefined
 
-    return { logDir, logLevel, logSize, logCount, rpcPortal }
+    return { logDir, logLevel, logSize, logCount, rpcPortal, processArgs: coreProcessArgs(config) }
   } catch (e) {
     error(`读取配置文件失败:${JSON.stringify(e)}`)
     // 返回默认值
@@ -71,7 +73,8 @@ async function getConfigFromFile(configFileName: string): Promise<{
       logLevel: 'info',
       logSize: undefined,
       logCount: undefined,
-      rpcPortal: undefined
+      rpcPortal: undefined,
+      processArgs: []
     }
   }
 }
@@ -87,7 +90,8 @@ export async function buildCoreArgsWithLogConfig(
   configFileName: string,
   configPath: string
 ): Promise<string> {
-  const { logDir, logLevel, logSize, logCount, rpcPortal } = await getConfigFromFile(configFileName)
+  const { logDir, logLevel, logSize, logCount, rpcPortal, processArgs } =
+    await getConfigFromFile(configFileName)
   let args = `--file-log-dir "${logDir}" --file-log-level ${logLevel}`
   // 仅当用户配置了大小/数量时才追加，避免覆盖内核默认值
   if (logSize) args += ` --file-log-size ${logSize}`
@@ -95,6 +99,10 @@ export async function buildCoreArgsWithLogConfig(
   args += ` --config-file "${configPath}"`
   if (rpcPortal) {
     args += ` --rpc-portal ${rpcPortal}`
+  }
+  // NSSM 接收 Windows 参数字符串，按 CommandLineToArgvW 规则保护路径中的引号及反斜杠。
+  for (const argument of processArgs) {
+    args += ` "${argument.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1')}"`
   }
   return args
 }
@@ -249,18 +257,18 @@ export async function executeBack(
   }
 }
 
-// 运行 easytier-core 配置
+/** 校验并启动配置，将进程级参数同步用于各桌面平台。 */
 export async function runEasyTierCore(configFileName: string): Promise<any> {
   try {
     // 启动前校验配置文件，避免无效配置反复启动失败
-    const checkResult = await checkConfigFile(configFileName)
+    const checkResult = await prepareConfigForRun(configFileName)
     if (!checkResult.valid) {
-      error(`配置校验失败，取消启动：${checkResult.message}`)
+      error('配置校验失败，取消启动；详细原因已返回界面')
       return { code: 403, msg: checkResult.message }
     }
     // 读取配置文件获取日志配置和 rpc_portal
     // v2.5.0 起 rpc_portal 不再从配置文件读取，需通过 --rpc-portal 命令行参数传递
-    const { logDir, logLevel, logSize, logCount, rpcPortal } =
+    const { logDir, logLevel, logSize, logCount, rpcPortal, processArgs } =
       await getConfigFromFile(configFileName)
     if ((await getPlatform()) === 'macos') {
       const pid = await invoke<number>('start_core_macos', {
@@ -268,7 +276,8 @@ export async function runEasyTierCore(configFileName: string): Promise<any> {
         logLevel,
         logSize,
         logCount,
-        rpcPortal
+        rpcPortal,
+        processArgs
       })
       info(`macOS 内核已启动，PID: ${pid}`)
       return pid
@@ -280,6 +289,7 @@ export async function runEasyTierCore(configFileName: string): Promise<any> {
     // 日志滚动限制仅在用户配置时追加，未配置则使用内核默认值
     const args: string[] = ['--file-log-dir', `${logDir}`, '--file-log-level', logLevel]
     appendFileLogLimitArgs(args, logSize, logCount)
+    args.push(...processArgs)
     args.push('--config-file', `${configPath}`)
 
     // 如果配置了 rpc_portal，通过命令行参数传递
@@ -1032,13 +1042,14 @@ export const installServiceWithOfficialCli = async (
 
       // 读取配置文件获取日志配置和 rpc_portal
       // v2.5.0 起 rpc_portal 不再从配置文件读取，需通过 --rpc-portal 命令行参数传递
-      const { logDir, logLevel, logSize, logCount, rpcPortal } =
+      const { logDir, logLevel, logSize, logCount, rpcPortal, processArgs } =
         await getConfigFromFile(configFileName)
 
       // 构建服务运行时的参数
       // 格式: easytier-core --file-log-dir ./log --file-log-level info [--file-log-size n] [--file-log-count n] --config-file config.toml [--rpc-portal addr]
       const coreArgs = ['--file-log-dir', `${logDir}`, '--file-log-level', logLevel]
       appendFileLogLimitArgs(coreArgs, logSize, logCount)
+      coreArgs.push(...processArgs)
       coreArgs.push('--config-file', `${configPath}`)
       args.push('--', ...coreArgs)
 

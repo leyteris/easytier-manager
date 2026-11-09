@@ -7,14 +7,14 @@ import { CONFIG_PATH, PREFIX_SVC } from '@/constants/easytier'
 import { useI18n } from '@/hooks/web/useI18n'
 import { useEasyTierStore } from '@/store/modules/easytier'
 import type { EasyTierFormData } from '@/types/formTypes'
-import { checkConfigFile } from '@/utils/configCheckUtil'
+import { prepareConfigForRun, saveCompatibleConfig } from '@/utils/configCheckUtil'
+import { normalizeCoreConfig } from '@/utils/coreConfigCompat'
 import {
   deleteFileOrDir,
   getConfigDir,
   getLogsDir,
   listTomlFiles,
-  readFileContent,
-  writeFileContent
+  readFileContent
 } from '@/utils/fileUtil'
 import {
   buildCoreArgsWithLogConfig,
@@ -38,7 +38,7 @@ import {
 } from '@/utils/serviceConfigUtil'
 import { getCurrentUsername, getHostname, getOsType, sleep } from '@/utils/sysUtil'
 import { join } from '@tauri-apps/api/path'
-import { attachConsole, error, info } from '@tauri-apps/plugin-log'
+import { attachConsole, info } from '@tauri-apps/plugin-log'
 import { ElMessageBox, ElNotification } from 'element-plus'
 import { cloneDeep } from 'lodash-es'
 import * as toml from 'smol-toml'
@@ -132,22 +132,6 @@ const readFileData = async (fileName: string) => {
   dataConfig.value = (await readFileContent(CONFIG_PATH + '/' + fileName)) as string
 }
 
-/**
- * 保存后用 easytier-core --check-config 校验配置文件，
- * 校验失败只提示不阻断保存（文件中的未知自定义键核心是容忍的）。
- */
-const notifyIfConfigInvalid = async (fileName: string) => {
-  const result = await checkConfigFile(fileName)
-  if (!result.valid) {
-    ElNotification({
-      title: t('common.reminder'),
-      message: t('easytier.configCheckFailed') + (result.message ? `：${result.message}` : ''),
-      type: 'warning',
-      duration: 8000
-    })
-  }
-}
-
 const edit = async (row: any) => {
   dialogTitle.value = t('exampleDemo.edit')
   actionType.value = 'edit'
@@ -157,14 +141,20 @@ const edit = async (row: any) => {
   dialogVisible.value = true
 }
 
+/** 读取新旧配置供表单编辑，保留未知字段并补齐表单容器。 */
 const editForm = async (row: any) => {
   dialogTitle.value = t('exampleDemo.edit')
   actionType.value = 'edit'
   editType.value = 'form'
   await readFileData(row.fileName)
   const defaults = cloneDeep(DefaultData.defaultFormData)
-  const parsed = toml.parse(dataConfig.value)
+  const parsed = normalizeCoreConfig(toml.parse(dataConfig.value))
   formData.value = Object.assign({}, defaults, parsed) as EasyTierFormData
+  formData.value.flags ??= {}
+  formData.value.secure_mode ??= {}
+  formData.value.manager_runtime ??= {}
+  formData.value.file_logger ??= {}
+  formData.value.console_logger ??= {}
   if (!formData.value.vpn_portal_config) {
     formData.value.vpn_portal_config = {}
     formData.value.vpn_portal_config.client_cidr = ''
@@ -235,8 +225,8 @@ const cleanupOptionalFormFields = (data: EasyTierFormData) => {
     }
   })
 
-  if (data.flags?.ipv6_public_addr_prefix === '') {
-    data.flags.ipv6_public_addr_prefix = undefined
+  if (data.ipv6_public_addr_prefix === '') {
+    data.ipv6_public_addr_prefix = undefined
   }
 
   // ACL：没有任何分组/声明/规则链时不写入 TOML
@@ -292,8 +282,9 @@ const addConfigAction = async () => {
         formData.value.network_identity = undefined
       }
       if (
-        formData.value.vpn_portal_config?.client_cidr === '' ||
-        formData.value.vpn_portal_config?.wireguard_listen === ''
+        !formData.value.vpn_portal_config?.wireguard_listen &&
+        !formData.value.vpn_portal_config?.client_cidr &&
+        !formData.value.vpn_portal_config?.clients?.length
       ) {
         formData.value.vpn_portal_config = undefined
       }
@@ -326,11 +317,9 @@ const addConfigAction = async () => {
       if (!formData.value.routes || formData.value.routes.length === 0) {
         formData.value.routes = undefined
       }
-      await writeFileContent(
-        CONFIG_PATH + '/' + configFileName.value + '.toml',
-        toml.stringify(formData.value)
-      )
-      await notifyIfConfigInvalid(configFileName.value + '.toml')
+      await saveCompatibleConfig(configFileName.value + '.toml', toml.stringify(formData.value))
+      dialogVisible.value = false
+      configFileName.value = ''
       ElNotification({
         title: t('common.reminder'),
         message: t('common.accessSuccess'),
@@ -338,34 +327,21 @@ const addConfigAction = async () => {
         duration: 2000
       })
     } catch (e: any) {
-      error(`表单新增报错：${JSON.stringify(e)}`)
       ElNotification({
         title: t('common.reminder'),
-        message: '表单新增报错',
+        message: String(e?.message || e),
         type: 'error',
         duration: 2000
       })
     } finally {
-      configFileName.value = ''
       saveLoading.value = false
-      dialogVisible.value = false
     }
   } else {
     try {
       saveLoading.value = true
-      // @ts-ignore
-      // @ts-nocheck
-      let parseValue: EasyTierConfig = toml.parse(dataConfig.value)
-      parseValue = {
-        ...parseValue,
-        file_logger: {
-          level: parseValue.file_logger?.level ? parseValue.file_logger?.level : 'error',
-          dir: parseValue.file_logger?.dir ? parseValue.file_logger?.dir : logsDir.value,
-          file: configFileName.value
-        }
-      }
-      await writeFileContent(CONFIG_PATH + '/' + configFileName.value + '.toml', dataConfig.value)
-      await notifyIfConfigInvalid(configFileName.value + '.toml')
+      await saveCompatibleConfig(configFileName.value + '.toml', dataConfig.value)
+      dialogVisible.value = false
+      configFileName.value = ''
       ElNotification({
         title: t('common.reminder'),
         message: t('common.accessSuccess'),
@@ -373,17 +349,14 @@ const addConfigAction = async () => {
         duration: 2000
       })
     } catch (e: any) {
-      error(`Error writing file:${JSON.stringify(e)}`)
       ElNotification({
         title: t('common.reminder'),
-        message: JSON.stringify(e),
+        message: String(e?.message || e),
         type: 'error',
         duration: 5000
       })
     } finally {
-      configFileName.value = ''
       saveLoading.value = false
-      dialogVisible.value = false
     }
   }
   await getConfigList()
@@ -431,8 +404,9 @@ const saveConfigAction = async () => {
           formData.value.network_identity = undefined
         }
         if (
-          formData.value.vpn_portal_config?.client_cidr === '' ||
-          formData.value.vpn_portal_config?.wireguard_listen === ''
+          !formData.value.vpn_portal_config?.wireguard_listen &&
+          !formData.value.vpn_portal_config?.client_cidr &&
+          !formData.value.vpn_portal_config?.clients?.length
         ) {
           formData.value.vpn_portal_config = undefined
         }
@@ -465,11 +439,9 @@ const saveConfigAction = async () => {
         if (!formData.value.routes || formData.value.routes.length === 0) {
           formData.value.routes = undefined
         }
-        await writeFileContent(
-          CONFIG_PATH + '/' + configFileName.value + '.toml',
-          toml.stringify(formData.value)
-        )
-        await notifyIfConfigInvalid(configFileName.value + '.toml')
+        await saveCompatibleConfig(configFileName.value + '.toml', toml.stringify(formData.value))
+        dialogVisible.value = false
+        configFileName.value = ''
         ElNotification({
           title: t('common.reminder'),
           message: t('common.accessSuccess'),
@@ -477,37 +449,20 @@ const saveConfigAction = async () => {
           duration: 2000
         })
       } catch (e: any) {
-        error(`表单保存报错：${JSON.stringify(e)}`)
         ElNotification({
           title: t('common.reminder'),
-          message: '表单保存报错',
-          type: 'success',
-          duration: 2000
+          message: String(e?.message || e),
+          type: 'error',
+          duration: 8000
         })
       } finally {
-        configFileName.value = ''
         saveLoading.value = false
-        dialogVisible.value = false
       }
     }
   } else {
     try {
-      // @ts-ignore
-      // @ts-nocheck
-      let parseValue: EasyTierConfig = toml.parse(dataConfig.value)
-      parseValue = {
-        ...parseValue,
-        file_logger: {
-          level: parseValue.file_logger?.level ? parseValue.file_logger?.level : 'error',
-          dir: logsDirPath,
-          file: configFileName.value
-        }
-      }
-      await writeFileContent(
-        CONFIG_PATH + '/' + configFileName.value + '.toml',
-        toml.stringify(parseValue)
-      )
-      await notifyIfConfigInvalid(configFileName.value + '.toml')
+      saveLoading.value = true
+      await saveCompatibleConfig(configFileName.value + '.toml', dataConfig.value)
       configFileName.value = ''
       dialogVisible.value = false
       ElNotification({
@@ -517,13 +472,14 @@ const saveConfigAction = async () => {
         duration: 2000
       })
     } catch (e: any) {
-      error(`Error writing file:${JSON.stringify(e)}`)
       ElNotification({
         title: t('common.reminder'),
-        message: JSON.stringify(e),
+        message: String(e?.message || e),
         type: 'error',
-        duration: 5000
+        duration: 8000
       })
+    } finally {
+      saveLoading.value = false
     }
   }
   await getConfigList()
@@ -587,6 +543,7 @@ const installServiceHandle = async (row: any) => {
   installServiceDialogVisible.value = true
 }
 
+/** 安装服务前适配并校验配置，避免注册无法启动的旧字段配置。 */
 const confirmInstallService = async () => {
   const row = currentInstallRow.value
   if (!row) return
@@ -600,7 +557,7 @@ const confirmInstallService = async () => {
   const serviceName = PREFIX_SVC + row.configFileName
 
   // 安装前校验配置文件，避免把无效配置注册成开机自启服务
-  const checkResult = await checkConfigFile(row.fileName)
+  const checkResult = await prepareConfigForRun(row.fileName)
   if (!checkResult.valid) {
     ElNotification({
       title: t('common.reminder'),
@@ -993,7 +950,7 @@ onMounted(async () => {
               <Icon icon="ep:collection-tag" />
             </template>
             <template #append>
-              <el-tooltip content="将作为配置文件名和服务名" placement="top">
+              <el-tooltip trigger="click" content="将作为配置文件名和服务名" placement="top">
                 <Icon icon="ep:info-filled" class="cursor-pointer" />
               </el-tooltip>
             </template>

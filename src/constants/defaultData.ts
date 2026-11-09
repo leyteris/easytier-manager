@@ -9,6 +9,13 @@ const defaultFormData: EasyTierFormData | any = {
     network_secret: ''
   },
   dhcp: true,
+  manager_runtime: {},
+  dhcpv6: undefined,
+  tcp_stun_servers: undefined,
+  secure_mode: {},
+  ipv6_public_addr_provider: undefined,
+  ipv6_public_addr_auto: undefined,
+  ipv6_public_addr_prefix: undefined,
   ipv4: undefined,
   ipv6: undefined,
   peer: [{ uri: undefined }],
@@ -80,12 +87,10 @@ const defaultFormData: EasyTierFormData | any = {
     lazy_p2p: undefined, // 按需建立 P2P
     need_p2p: undefined, // 声明需要主动 P2P
     disable_upnp: undefined, // 禁用 UPnP/NAT-PMP 映射
-    no_listener: undefined, // 不监听任何端口
-    ipv6_public_addr_provider: undefined, // 共享公网 IPv6 子网
-    ipv6_public_addr_auto: undefined, // 自动获取公网 IPv6 地址
-    ipv6_public_addr_prefix: undefined, // 手动指定公网 IPv6 子网
+    socket_mark: undefined,
+    prefer_peer_relay: undefined,
+    disable_relay_data: undefined,
     enable_udp_broadcast_relay: undefined, // 启用 UDP 广播中继
-    secure_mode: undefined, // 启用安全模式
     disable_relay_kcp: undefined, // 禁止转发 KCP 数据包
     disable_relay_quic: undefined, // 禁止转发 QUIC 数据包
     enable_relay_foreign_network_kcp: undefined, // 允许转发外部网络 KCP

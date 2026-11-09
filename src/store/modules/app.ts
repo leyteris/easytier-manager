@@ -8,8 +8,17 @@ import { ElMessage, ComponentSize } from 'element-plus'
 import { useCssVar } from '@vueuse/core'
 import { unref } from 'vue'
 import { useDark } from '@vueuse/core'
+import type { NavigationPreferences } from '@/utils/navigation'
+import { restoreUiState } from '@/utils/uiState'
+import pkg from '../../../package.json'
 
+// 软件版本变化或同版本 UI 结构修订时，旧布局回到当前默认值。
+const UI_VERSION = `${pkg.version}:1`
+
+/** 应用显示状态及持久化导航偏好。 */
 interface AppState {
+  uiVersion: string
+  navigation: NavigationPreferences
   breadcrumb: boolean
   breadcrumbIcon: boolean
   collapse: boolean
@@ -40,6 +49,8 @@ interface AppState {
 export const useAppStore = defineStore('app', {
   state: (): AppState => {
     return {
+      uiVersion: UI_VERSION,
+      navigation: { order: [], hidden: [] },
       sizeMap: ['default', 'large', 'small'],
       mobile: false, // 是否是移动端
       title: import.meta.env.VITE_APP_TITLE, // 标题
@@ -332,7 +343,12 @@ export const useAppStore = defineStore('app', {
       isDark.value = this.getIsDark
     }
   },
-  persist: true
+  persist: {
+    serializer: {
+      serialize: JSON.stringify,
+      deserialize: (value) => restoreUiState(value, UI_VERSION)
+    }
+  }
 })
 
 export const useAppStoreWithOut = () => {

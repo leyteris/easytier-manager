@@ -41,6 +41,7 @@ import {
 import { cloneDeep, template } from 'lodash-es'
 import { computed, onMounted, reactive, ref, unref } from 'vue'
 import { measureMirrorLatency } from '@/utils'
+import NavigationSettings from './NavigationSettings.vue'
 
 const { t } = useI18n()
 const { getStorage, setStorage, clear: storageClear } = useStorage('localStorage')
@@ -713,6 +714,8 @@ onMounted(async () => {
           </template>
         </el-form>
       </el-card>
+
+      <NavigationSettings />
 
       <!-- 日志与维护 -->
       <el-card class="mb-20px shadow-sm">

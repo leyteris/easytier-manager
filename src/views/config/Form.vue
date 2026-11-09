@@ -16,6 +16,21 @@
         </el-icon>
         主要参数
       </el-divider>
+      <el-alert
+        v-if="coreCapabilityReason"
+        :title="coreCapabilityReason"
+        :type="coreCapabilityError ? 'warning' : 'info'"
+        :closable="false"
+        class="mb-12px"
+      >
+        <el-button
+          v-if="coreCapabilityError"
+          size="small"
+          :loading="coreCapabilityLoading"
+          @click="loadCoreCapabilities"
+          >重新检测内核</el-button
+        >
+      </el-alert>
       <el-row>
         <el-col :md="24" :sm="24" :xs="24">
           <el-form-item :label="t('easytier.hostname')" prop="hostname">
@@ -67,7 +82,7 @@
             <template #label>
               {{ t('easytier.machine_id') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="机器 ID，用于 Web 配置服务器识别机器，断线重连后恢复配置。默认从系统获取。"
                 placement="top"
               >
@@ -88,10 +103,16 @@
           <el-button @click="generateMachineId" :icon="Refresh">生成</el-button>
         </el-col>
       </el-row>
+      <CoreOptions
+        v-model:config="localFormData"
+        section="state"
+        :help="coreHelp"
+        :capability-reason="coreCapabilityReason"
+      />
       <el-row>
         <el-col :md="8" :sm="8" :xs="8">
           <el-form-item :label="t('easytier.dhcp')" prop="dhcp">
-            <el-switch v-model="localFormData.dhcp" />
+            <el-switch v-model="dhcpEnabled" />
           </el-form-item>
         </el-col>
         <el-col :md="8" :sm="8" :xs="8">
@@ -101,16 +122,27 @@
         </el-col>
         <el-col :md="8" :sm="8" :xs="8">
           <el-form-item :label="t('easytier.ipv6Vir')" prop="ipv4" label-width="70">
-            <el-input v-model="localFormData.ipv6" type="text" :disabled="ipv4Disabled" clearable />
+            <el-input
+              v-model="localFormData.ipv6"
+              type="text"
+              :disabled="!!localFormData.dhcpv6"
+              clearable
+            />
           </el-form-item>
         </el-col>
       </el-row>
       <el-row>
         <el-col :md="24" :sm="24" :xs="24">
+          <CoreOptions
+            v-model:config="localFormData"
+            section="addresses"
+            :help="coreHelp"
+            :capability-reason="coreCapabilityReason"
+          />
           <el-form-item prop="peer">
             <template #label>
               {{ t('easytier.peers') }}
-              <el-tooltip trigger="hover" content="支持手动输入" placement="top">
+              <el-tooltip trigger="click" content="支持手动输入" placement="top">
                 <el-icon class="label-info-icon">
                   <InfoFilled />
                 </el-icon>
@@ -142,20 +174,26 @@
       </el-row>
       <el-row>
         <el-col :md="24" :sm="24" :xs="24">
-          <el-tooltip
-            trigger="hover"
-            content="使用公共共享节点来发现对等节点，例如：tcp://public.easytier.top:11010"
-            placement="top"
-          >
-            <el-form-item :label="t('easytier.external_node')" prop="external_node">
-              <el-input
-                v-model="localFormData.external_node"
-                type="text"
-                placeholder="tcp://public.easytier.top:11010"
-                clearable
-              />
-            </el-form-item>
-          </el-tooltip>
+          <el-form-item prop="external_node">
+            <template #label>
+              {{ t('easytier.external_node') }}
+              <el-tooltip
+                trigger="click"
+                content="使用公共共享节点来发现对等节点，例如：tcp://public.easytier.top:11010"
+                placement="top"
+              >
+                <el-icon class="label-info-icon">
+                  <InfoFilled />
+                </el-icon>
+              </el-tooltip>
+            </template>
+            <el-input
+              v-model="localFormData.external_node"
+              type="text"
+              placeholder="tcp://public.easytier.top:11010"
+              clearable
+            />
+          </el-form-item>
         </el-col>
       </el-row>
       <el-row>
@@ -163,7 +201,7 @@
           <el-form-item prop="listeners">
             <template #label>
               {{ t('easytier.listeners') }}
-              <el-tooltip trigger="hover" content="支持手动输入" placement="top">
+              <el-tooltip trigger="click" content="支持手动输入" placement="top">
                 <el-icon class="label-info-icon">
                   <InfoFilled />
                 </el-icon>
@@ -193,8 +231,8 @@
             <template #label>
               {{ t('easytier.no_listener') }}
               <el-tooltip
-                trigger="hover"
-                content="不监听任何端口，只主动连接到对等节点"
+                trigger="click"
+                content="不监听任何端口，只主动连接到对等节点。配置格式：已在 2.7.0 开发构建验证使用显式空监听列表，不写入 flags.no_listener。"
                 placement="top"
               >
                 <el-icon class="label-info-icon">
@@ -202,7 +240,7 @@
                 </el-icon>
               </el-tooltip>
             </template>
-            <el-switch v-model="localFormData.flags.no_listener" />
+            <el-switch v-model="noListener" />
           </el-form-item>
         </el-col>
       </el-row>
@@ -212,7 +250,7 @@
             <template #label>
               {{ t('easytier.mapped_listeners') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="手动指定监听器的公网地址，其他节点可以使用该地址连接到本节点。例如：tcp://123.123.123.123:11223，可以指定多个"
                 placement="top"
               >
@@ -244,7 +282,7 @@
           <el-form-item prop="proxy_network.cidr">
             <template #label>
               {{ t('easytier.proxy_network') }}
-              <el-tooltip trigger="hover" content="支持手动输入" placement="top">
+              <el-tooltip trigger="click" content="支持手动输入" placement="top">
                 <el-icon class="label-info-icon">
                   <InfoFilled />
                 </el-icon>
@@ -275,7 +313,7 @@
             <template #label>
               {{ t('easytier.routes') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="路由，将流量路由到指定的网络。例如：10.0.0.0/8"
                 placement="top"
               >
@@ -311,8 +349,8 @@
             <template #label>
               {{ t('easytier.vpn_client_cidr') }}
               <el-tooltip
-                trigger="hover"
-                content="WireGuard客户端CIDR，例如：10.14.14.0/24"
+                trigger="click"
+                content="旧版 WireGuard 客户端地址池，例如：10.14.14.0/24。已验证 2.7.0 开发构建不再接受此字段，请使用下方具名客户端配置；旧格式仍保留供旧内核使用。"
                 placement="top"
               >
                 <el-icon class="label-info-icon">
@@ -320,7 +358,12 @@
                 </el-icon>
               </el-tooltip>
             </template>
-            <el-input v-model="vpnPortalConfig.client_cidr" type="text" clearable />
+            <el-input
+              v-model="vpnClientCidr"
+              type="text"
+              placeholder="旧内核地址池；新版请使用下方客户端列表"
+              clearable
+            />
           </el-form-item>
         </el-col>
         <el-col :md="12" :sm="12" :xs="12">
@@ -328,7 +371,7 @@
             <template #label>
               {{ t('easytier.vpn_wireguard_listen') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="WireGuard监听地址，例如：0.0.0.0:11010"
                 placement="top"
               >
@@ -343,11 +386,17 @@
       </el-row>
       <el-row>
         <el-col :span="24">
+          <CoreOptions
+            v-model:config="localFormData"
+            section="portal"
+            :help="coreHelp"
+            :capability-reason="coreCapabilityReason"
+          />
           <el-form-item prop="stun_servers">
             <template #label>
               {{ t('easytier.stun_servers') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="IPv4 STUN 服务器列表，用于 NAT 穿透。支持手动输入，多个服务器。"
                 placement="top"
               >
@@ -392,7 +441,7 @@
             <template #label>
               {{ t('easytier.stun_servers_v6') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="IPv6 STUN 服务器列表，用于 IPv6 NAT 穿透。"
                 placement="top"
               >
@@ -420,13 +469,19 @@
           </el-form-item>
         </el-col>
       </el-row>
+      <CoreOptions
+        v-model:config="localFormData"
+        section="stun"
+        :help="coreHelp"
+        :capability-reason="coreCapabilityReason"
+      />
       <el-row>
         <el-col :span="24">
           <el-form-item prop="rpc_portal_whitelist">
             <template #label>
               {{ t('easytier.rpc_portal_whitelist') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="RPC 门户白名单，限制哪些 IP 可以访问 RPC 接口。支持 IP 和 CIDR。例如：127.0.0.1,127.0.0.0/8"
                 placement="top"
               >
@@ -460,7 +515,7 @@
             <template #label>
               {{ t('easytier.socks5_proxy') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="SOCKS5 代理地址。例如：socks5://0.0.0.0:1080"
                 placement="top"
               >
@@ -483,7 +538,7 @@
           <el-form-item prop="exit_nodes">
             <template #label>
               {{ t('easytier.exit_nodes') }}
-              <el-tooltip trigger="hover" content="支持手动输入" placement="top">
+              <el-tooltip trigger="click" content="支持手动输入" placement="top">
                 <el-icon class="label-info-icon">
                   <InfoFilled />
                 </el-icon>
@@ -511,7 +566,7 @@
             <template #label>
               {{ t('easytier.config_exit_nodes_route') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="自动设置出口路由，如果断网，请关闭"
                 placement="top"
               >
@@ -528,7 +583,7 @@
             <template #label>
               {{ t('easytier.clear_log_on_run') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="每次启动该配置前，自动清空对应的日志文件；多实例共用 logs/easytier.log，清空会影响其他实例"
                 placement="top"
               >
@@ -547,7 +602,7 @@
             <template #label>
               {{ t('easytier.rpc_portal') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="使用不同的 RPC 端口，可以在首页实时查看节点信息"
                 placement="top"
               >
@@ -588,7 +643,7 @@
       <el-row>
         <el-col :span="12">
           <el-form-item :label="t('easytier.console_log_level')" prop="console_logger.level">
-            <el-select v-model="localFormData.console_logger.level" clearable>
+            <el-select v-model="consoleLogLevel" clearable>
               <el-option
                 v-for="(item, index) in file_logger_levelOptions"
                 :key="index"
@@ -617,7 +672,7 @@
             <template #label>
               {{ t('easytier.file_log_size') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="单个日志文件大小，单位 MB；留空使用内核默认值 100MB"
                 placement="top"
               >
@@ -627,7 +682,7 @@
               </el-tooltip>
             </template>
             <el-input-number
-              v-model="localFormData.file_logger.size"
+              v-model="fileLogSize"
               :min="1"
               :max="1000"
               placeholder="100"
@@ -640,7 +695,7 @@
             <template #label>
               {{ t('easytier.file_log_count') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="最大日志文件数量；留空使用内核默认值 10"
                 placement="top"
               >
@@ -670,7 +725,7 @@
           <el-form-item prop="flags.default_protocol">
             <template #label>
               {{ t('easytier.default_protocol') }}
-              <el-tooltip trigger="hover" content="连接到对等节点时使用的默认协议" placement="top">
+              <el-tooltip trigger="click" content="连接到对等节点时使用的默认协议" placement="top">
                 <el-icon class="label-info-icon">
                   <InfoFilled />
                 </el-icon>
@@ -690,7 +745,7 @@
           <el-form-item prop="flags.dev_name">
             <template #label>
               {{ t('easytier.dev_name') }}
-              <el-tooltip trigger="hover" content="TUN接口名称，为空则随机生成" placement="top">
+              <el-tooltip trigger="click" content="TUN接口名称，为空则随机生成" placement="top">
                 <el-icon class="label-info-icon">
                   <InfoFilled />
                 </el-icon>
@@ -706,13 +761,19 @@
           </el-form-item>
         </el-col>
       </el-row>
+      <CoreOptions
+        v-model:config="localFormData"
+        section="socket"
+        :help="coreHelp"
+        :capability-reason="coreCapabilityReason"
+      />
       <el-row :span="24">
         <el-col :span="12">
           <el-form-item prop="flags.latency_first">
             <template #label>
               {{ t('easytier.latency_first') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="延迟优先模式，将尝试使用最低延迟路径转发流量，关闭则使用最短路径"
                 placement="top"
               >
@@ -725,10 +786,14 @@
           </el-form-item>
         </el-col>
         <el-col :span="12">
-          <el-form-item
-            :label="t('easytier.compression_algorithm')"
-            prop="flags.data_compress_algo"
-          >
+          <el-form-item prop="flags.data_compress_algo">
+            <template #label
+              ><CoreOptionLabel
+                :label="t('easytier.compression_algorithm')"
+                description="None、Zstd 沿用原配置；LZO 已在所示版本验证，仅在当前内核帮助包含 LZO 时可选。"
+                :supported="supportsLzo"
+                :unavailable-reason="coreCapabilityReason"
+            /></template>
             <el-select
               v-model="localFormData.flags.data_compress_algo"
               @change="compressChange"
@@ -739,6 +804,7 @@
                 :key="index"
                 :label="item.label"
                 :value="item.value"
+                :disabled="item.value === 3 && !supportsLzo"
               />
             </el-select>
           </el-form-item>
@@ -755,7 +821,7 @@
             <template #label>
               {{ t('easytier.encryption_algorithm') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="选择加密算法：aes-gcm（默认）、aes-256-gcm、xor（最快）、chacha20"
                 placement="top"
               >
@@ -790,7 +856,7 @@
             <template #label>
               {{ t('easytier.mtu') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="TUN 设备的 MTU 值。默认：非加密 1380，加密 1360"
                 placement="top"
               >
@@ -820,8 +886,8 @@
             <template #label>
               {{ t('easytier.multi_thread_count') }}
               <el-tooltip
-                trigger="hover"
-                content="多线程模式下使用的线程数，默认为 2。需要先启用多线程模式。"
+                trigger="click"
+                content="独占多线程模式默认及最小为 2；共享运行时默认使用可用 CPU 数，最小为 1。以上规则已在 2.7.0 开发构建验证，首次变更版本尚未确认。"
                 placement="top"
               >
                 <el-icon class="label-info-icon">
@@ -831,21 +897,28 @@
             </template>
             <el-input-number
               v-model="localFormData.flags.multi_thread_count"
-              :min="2"
-              :max="16"
-              :disabled="!localFormData.flags.multi_thread"
+              :min="localFormData.manager_runtime?.shared_runtime ? 1 : 2"
+              :disabled="
+                !localFormData.manager_runtime?.shared_runtime && !localFormData.flags.multi_thread
+              "
               placeholder="默认2"
             />
           </el-form-item>
         </el-col>
       </el-row>
+      <CoreOptions
+        v-model:config="localFormData"
+        section="runtime"
+        :help="coreHelp"
+        :capability-reason="coreCapabilityReason"
+      />
       <el-row>
         <el-col :span="12">
           <el-form-item prop="flags.bind_device">
             <template #label>
               {{ t('easytier.bind_device') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="将连接器的套接字绑定到物理设备以避免路由问题。比如子网代理网段与某节点的网段冲突，绑定物理设备后可以与该节点正常通信"
                 placement="top"
               >
@@ -861,7 +934,7 @@
           <el-form-item prop="flags.disable_tcp_hole_punching">
             <template #label>
               {{ t('easytier.disable_tcp_hole_punching') }}
-              <el-tooltip trigger="hover" content="禁用 TCP 打洞功能" placement="top">
+              <el-tooltip trigger="click" content="禁用 TCP 打洞功能" placement="top">
                 <el-icon class="label-info-icon">
                   <InfoFilled />
                 </el-icon>
@@ -877,7 +950,7 @@
             <template #label>
               {{ t('easytier.enable_kcp_proxy') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="启用KCP代理，提高在 UDP 丢包网络上的延迟和吞吐量"
                 placement="top"
               >
@@ -894,7 +967,7 @@
             <template #label>
               {{ t('easytier.disable_kcp_input') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="不允许其他节点使用 KCP 代理 TCP 流到此节点。开启 KCP 代理的节点访问此节点时，依然使用原始 TCP 连接"
                 placement="top"
               >
@@ -913,7 +986,7 @@
             <template #label>
               {{ t('easytier.enable_quic_proxy') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="启用 QUIC 协议代理，提供更好的性能和连接质量"
                 placement="top"
               >
@@ -932,7 +1005,7 @@
             <template #label>
               {{ t('easytier.disable_quic_input') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="不允许其他节点使用 QUIC 代理 TCP 流到此节点"
                 placement="top"
               >
@@ -949,7 +1022,7 @@
             <template #label>
               {{ t('easytier.disable_sym_hole_punching') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="禁用基于生日攻击的对称 NAT (NAT4) UDP 打洞功能。该功能可能被运营商封锁。"
                 placement="top"
               >
@@ -968,7 +1041,7 @@
             <template #label>
               {{ t('easytier.no_tun') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="no-tun,不创建TUN设备，可以使用子网代理访问节点"
                 placement="top"
               >
@@ -985,7 +1058,7 @@
             <template #label>
               {{ t('easytier.use_smoltcp') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="use-smoltcp,为子网代理启用smoltcp堆栈"
                 placement="top"
               >
@@ -1004,8 +1077,8 @@
             <template #label>
               {{ t('easytier.disable_p2p') }}
               <el-tooltip
-                trigger="hover"
-                content="disable-p2p,禁用P2P通信，只通过--peers指定的节点转发数据包"
+                trigger="click"
+                content="禁用普通自动 P2P；新版内核仍可与标记 need-p2p 的节点建立连接。此行为已在 2.7.0 开发构建帮助中确认，首次变更版本尚未确认。"
                 placement="top"
               >
                 <el-icon class="label-info-icon">
@@ -1021,7 +1094,7 @@
             <template #label>
               {{ t('easytier.disable_udp_hole_punching') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="disable-udp-hole-punching,禁用UDP打洞功能"
                 placement="top"
               >
@@ -1040,7 +1113,7 @@
             <template #label>
               {{ t('easytier.p2p_only') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="仅使用 P2P 直连模式，不使用中继节点。可能导致部分节点无法连接。"
                 placement="top"
               >
@@ -1057,7 +1130,7 @@
             <template #label>
               {{ t('easytier.lazy_p2p') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="仅在实际流量需要某个对等节点时才尝试建立 P2P"
                 placement="top"
               >
@@ -1076,7 +1149,7 @@
             <template #label>
               {{ t('easytier.need_p2p') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="声明即使其他节点启用按需 P2P，也应主动与当前节点建立 P2P"
                 placement="top"
               >
@@ -1093,7 +1166,7 @@
             <template #label>
               {{ t('easytier.disable_upnp') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="禁用监听器运行时 UPnP/NAT-PMP 自动端口映射"
                 placement="top"
               >
@@ -1111,7 +1184,7 @@
           <el-form-item prop="flags.disable_ipv6">
             <template #label>
               {{ t('easytier.disable_ipv6') }}
-              <el-tooltip trigger="hover" content="完全禁用 IPv6 功能" placement="top">
+              <el-tooltip trigger="click" content="完全禁用 IPv6 功能" placement="top">
                 <el-icon class="label-info-icon">
                   <InfoFilled />
                 </el-icon>
@@ -1132,7 +1205,7 @@
             <template #label>
               {{ t('easytier.relay_all_peer_rpc') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="relay-all-peer-rpc,转发所有对等节点的RPC数据包，即使对等节点不在转发网络白名单中。这可以帮助白名单外网络中的对等节点建立P2P连接"
                 placement="top"
               >
@@ -1151,7 +1224,7 @@
             <template #label>
               {{ t('easytier.accept_dns') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="使用魔法DNS，您可以使用域名访问其他节点，例如：<hostname>.et.net。魔法DNS将修改您的系统DNS设置，请谨慎启用。 [env:ET_ACCEPT_DNS=] [possible values: true, false]"
                 placement="top"
               >
@@ -1168,8 +1241,8 @@
             <template #label>
               {{ t('easytier.private_mode') }}
               <el-tooltip
-                trigger="hover"
-                content="如果为true，则不允许使用了与本网络不相同的网络名称和密码的节点通过本节点进行握手或中转 [env: ET_PRIVATE_MODE=] [possible values: true, false]"
+                trigger="click"
+                content="仅允许能验证相同网络密钥的外部网络，或已被信任的凭据节点接入。此行为已在 2.7.0 开发构建帮助中确认，首次变更版本尚未确认。"
                 placement="top"
               >
                 <el-icon class="label-info-icon">
@@ -1183,12 +1256,12 @@
       </el-row>
       <el-row>
         <el-col :span="12">
-          <el-form-item prop="flags.secure_mode">
+          <el-form-item prop="secure_mode.enabled">
             <template #label>
               {{ t('easytier.secure_mode') }}
               <el-tooltip
-                trigger="hover"
-                content="启用安全模式，安全密钥和凭据字段仅在该模式下使用"
+                trigger="click"
+                content="启用安全模式，安全密钥和凭据字段仅在该模式下使用。配置格式：已在 2.7.0 开发构建验证使用顶层 secure_mode 段，不写入 flags.secure_mode。"
                 placement="top"
               >
                 <el-icon class="label-info-icon">
@@ -1196,7 +1269,7 @@
                 </el-icon>
               </el-tooltip>
             </template>
-            <el-switch v-model="localFormData.flags.secure_mode" />
+            <el-switch v-model="localFormData.secure_mode.enabled" />
           </el-form-item>
         </el-col>
         <el-col :span="12">
@@ -1204,7 +1277,7 @@
             <template #label>
               {{ t('easytier.proxy_forward_by_system') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="proxy-forward-by-system,通过系统路由转发代理流量，而不是通过smoltcp。这可以提高性能，但需要管理员权限。 [env: ET_PROXY_FORWARD_BY_SYSTEM=] [possible values: true, false]"
                 placement="top"
               >
@@ -1219,12 +1292,12 @@
       </el-row>
       <el-row>
         <el-col :span="12">
-          <el-form-item prop="local_private_key">
+          <el-form-item prop="secure_mode.local_private_key">
             <template #label>
               {{ t('easytier.local_private_key') }}
               <el-tooltip
-                trigger="hover"
-                content="安全模式下的本地私钥；留空时由内核随机生成"
+                trigger="click"
+                content="安全模式下的本地私钥；留空时由内核随机生成。已在 2.7.0 开发构建验证应写入 secure_mode.local_private_key。"
                 placement="top"
               >
                 <el-icon class="label-info-icon">
@@ -1233,7 +1306,7 @@
               </el-tooltip>
             </template>
             <el-input
-              v-model="localFormData.local_private_key"
+              v-model="localFormData.secure_mode.local_private_key"
               type="password"
               :show-password="true"
               clearable
@@ -1241,12 +1314,12 @@
           </el-form-item>
         </el-col>
         <el-col :span="12">
-          <el-form-item prop="local_public_key">
+          <el-form-item prop="secure_mode.local_public_key">
             <template #label>
               {{ t('easytier.local_public_key') }}
               <el-tooltip
-                trigger="hover"
-                content="安全模式下的本地公钥；留空时可由私钥派生或由内核生成"
+                trigger="click"
+                content="安全模式下的本地公钥。已在 2.7.0 开发构建验证应写入 secure_mode.local_public_key；指定私钥时公钥必须与其匹配，具体要求由内核校验。"
                 placement="top"
               >
                 <el-icon class="label-info-icon">
@@ -1254,7 +1327,7 @@
                 </el-icon>
               </el-tooltip>
             </template>
-            <el-input v-model="localFormData.local_public_key" type="text" clearable />
+            <el-input v-model="localFormData.secure_mode.local_public_key" type="text" clearable />
           </el-form-item>
         </el-col>
       </el-row>
@@ -1264,7 +1337,7 @@
             <template #label>
               {{ t('easytier.credential') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="凭据密钥，用于临时节点加入网络，无需 network_secret"
                 placement="top"
               >
@@ -1286,7 +1359,7 @@
             <template #label>
               {{ t('easytier.credential_file') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="凭据存储文件路径，用于管理节点重启后保留已生成的凭据"
                 placement="top"
               >
@@ -1304,7 +1377,7 @@
           <el-form-item prop="flags.relay_network_whitelist">
             <template #label>
               {{ t('easytier.relay_network_whitelist') }}
-              <el-tooltip trigger="hover" placement="top">
+              <el-tooltip trigger="click" placement="top">
                 <template #content>
                   <div>
                     中继网络白名单，允许中继流量到这些网络。例如：10.0.0.0/8,192.168.0.0/16</div
@@ -1325,7 +1398,7 @@
             <template #label>
               {{ t('easytier.foreign_relay_bps_limit') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="外部中继带宽限制（字节/秒）。限制通过本节点中继的外部网络流量带宽。"
                 placement="top"
               >
@@ -1350,7 +1423,7 @@
             <template #label>
               {{ t('easytier.instance_recv_bps_limit') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="限制当前网络实例整体入站流量的总接收速率，单位 BPS，0 表示不限制"
                 placement="top"
               >
@@ -1375,7 +1448,7 @@
             <template #label>
               {{ t('easytier.disable_relay_kcp') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="禁止节点转发 KCP 数据包，防止过度消耗流量"
                 placement="top"
               >
@@ -1392,7 +1465,7 @@
             <template #label>
               {{ t('easytier.disable_relay_quic') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="禁止节点转发 QUIC 数据包，防止过度消耗流量"
                 placement="top"
               >
@@ -1405,13 +1478,19 @@
           </el-form-item>
         </el-col>
       </el-row>
+      <CoreOptions
+        v-model:config="localFormData"
+        section="relay"
+        :help="coreHelp"
+        :capability-reason="coreCapabilityReason"
+      />
       <el-row>
         <el-col :span="12">
           <el-form-item prop="flags.enable_relay_foreign_network_kcp">
             <template #label>
               {{ t('easytier.enable_relay_foreign_network_kcp') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="作为共享节点时也允许转发其他网络的 KCP 数据包"
                 placement="top"
               >
@@ -1428,7 +1507,7 @@
             <template #label>
               {{ t('easytier.enable_relay_foreign_network_quic') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="作为共享节点时也允许转发其他网络的 QUIC 数据包"
                 placement="top"
               >
@@ -1447,7 +1526,7 @@
             <template #label>
               {{ t('easytier.ipv6_listener') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="IPv6监听器，用于监听IPv6地址。例如：[::]:11010"
                 placement="top"
               >
@@ -1462,12 +1541,12 @@
       </el-row>
       <el-row>
         <el-col :span="12">
-          <el-form-item prop="flags.ipv6_public_addr_provider">
+          <el-form-item prop="ipv6_public_addr_provider">
             <template #label>
               {{ t('easytier.ipv6_public_addr_provider') }}
               <el-tooltip
-                trigger="hover"
-                content="将本节点的公网 IPv6 子网共享给其他节点，仅 Linux 支持"
+                trigger="click"
+                content="将本节点的公网 IPv6 子网共享给其他节点，仅 Linux 支持。配置格式：已在 2.7.0 开发构建验证使用顶层 ipv6_public_addr_provider，而非 flags 字段。"
                 placement="top"
               >
                 <el-icon class="label-info-icon">
@@ -1475,16 +1554,16 @@
                 </el-icon>
               </el-tooltip>
             </template>
-            <el-switch v-model="localFormData.flags.ipv6_public_addr_provider" />
+            <el-switch v-model="localFormData.ipv6_public_addr_provider" />
           </el-form-item>
         </el-col>
         <el-col :span="12">
-          <el-form-item prop="flags.ipv6_public_addr_auto">
+          <el-form-item prop="ipv6_public_addr_auto">
             <template #label>
               {{ t('easytier.ipv6_public_addr_auto') }}
               <el-tooltip
-                trigger="hover"
-                content="自动从共享 IPv6 子网的对等节点获取公网 IPv6 地址"
+                trigger="click"
+                content="自动从共享 IPv6 子网的对等节点获取公网 IPv6 地址。配置格式：已在 2.7.0 开发构建验证使用顶层 ipv6_public_addr_auto，而非 flags 字段。"
                 placement="top"
               >
                 <el-icon class="label-info-icon">
@@ -1492,18 +1571,18 @@
                 </el-icon>
               </el-tooltip>
             </template>
-            <el-switch v-model="localFormData.flags.ipv6_public_addr_auto" />
+            <el-switch v-model="localFormData.ipv6_public_addr_auto" />
           </el-form-item>
         </el-col>
       </el-row>
       <el-row>
         <el-col :span="12">
-          <el-form-item prop="flags.ipv6_public_addr_prefix">
+          <el-form-item prop="ipv6_public_addr_prefix">
             <template #label>
               {{ t('easytier.ipv6_public_addr_prefix') }}
               <el-tooltip
-                trigger="hover"
-                content="手动指定要共享的公网 IPv6 子网，不从系统路由自动检测"
+                trigger="click"
+                content="手动指定要共享的公网 IPv6 子网，不从系统路由自动检测。配置格式：已在 2.7.0 开发构建验证使用顶层 ipv6_public_addr_prefix，而非 flags 字段。"
                 placement="top"
               >
                 <el-icon class="label-info-icon">
@@ -1512,7 +1591,7 @@
               </el-tooltip>
             </template>
             <el-input
-              v-model="localFormData.flags.ipv6_public_addr_prefix"
+              v-model="localFormData.ipv6_public_addr_prefix"
               type="text"
               placeholder="2001:db8:abcd::/64"
               clearable
@@ -1524,7 +1603,7 @@
             <template #label>
               {{ t('easytier.enable_udp_broadcast_relay') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="仅 Windows：转发物理网卡上的 UDP 广播包，帮助局域网游戏发现房间"
                 placement="top"
               >
@@ -1543,7 +1622,7 @@
             <template #label>
               {{ t('easytier.socks5') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="SOCKS5代理，用于代理TCP流量。例如：127.0.0.1:1080"
                 placement="top"
               >
@@ -1562,7 +1641,7 @@
             <template #label>
               {{ t('easytier.tld_dns_zone') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="自定义顶级域名 DNS 区域。例如：net.et"
                 placement="top"
               >
@@ -1586,7 +1665,7 @@
             <template #label>
               {{ t('easytier.tcp_whitelist') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="TCP port whitelist. Supports single ports (80) and ranges (8000-9000) 2.4以上版本支持"
                 placement="top"
               >
@@ -1603,7 +1682,7 @@
             <template #label>
               {{ t('easytier.udp_whitelist') }}
               <el-tooltip
-                trigger="hover"
+                trigger="click"
                 content="UDP port whitelist. Supports single ports (53) and ranges (5000-6000) 2.4以上版本支持"
                 placement="top"
               >
@@ -1991,6 +2070,9 @@ import { useI18n } from 'vue-i18n'
 import { getHostname } from '@/utils/sysUtil'
 import { ElMessageBox, FormInstance, FormRules } from 'element-plus'
 import { useEasyTierStore } from '@/store/modules/easytier'
+import CoreOptions from './CoreOptions.vue'
+import CoreOptionLabel from './CoreOptionLabel.vue'
+import { getCoreHelp } from '@/utils/configCheckUtil'
 import {
   Connection,
   Delete,
@@ -2013,6 +2095,28 @@ interface FormData {
 
 const { t } = useI18n()
 const easyTierStore = useEasyTierStore()
+const coreHelp = ref('')
+const coreCapabilityLoading = ref(true)
+const coreCapabilityError = ref('')
+const coreCapabilityReason = computed(() =>
+  coreCapabilityLoading.value ? '正在检测内核能力，新增选项暂不可编辑。' : coreCapabilityError.value
+)
+const supportsLzo = computed(() => /\blzo\b/i.test(coreHelp.value))
+
+/** 每次打开表单只读取一次帮助，各功能分组共享结果；失败可重试且不改已有配置。 */
+async function loadCoreCapabilities() {
+  coreCapabilityLoading.value = true
+  coreCapabilityError.value = ''
+  coreHelp.value = ''
+  try {
+    coreHelp.value = await getCoreHelp()
+  } catch (error) {
+    coreCapabilityError.value = `无法检测内核能力，相关选项暂不可编辑：${String(error)}`
+  } finally {
+    coreCapabilityLoading.value = false
+  }
+}
+onMounted(loadCoreCapabilities)
 const props = defineProps<{
   formData: FormData
 }>()
@@ -2055,8 +2159,48 @@ const vpnWireguardListen = computed({
   }
 })
 
+/** 显式空监听列表表示不监听；关闭开关后恢复内核默认监听。 */
+const noListener = computed({
+  get: () =>
+    Array.isArray(localFormData.value.listeners) && localFormData.value.listeners.length === 0,
+  set: (value: boolean) => {
+    localFormData.value.listeners = value ? [] : undefined
+  }
+})
+
+/** 旧门户地址池只在用户编辑时写回，避免初始化污染新版门户结构。 */
+const vpnClientCidr = computed({
+  get: () => localFormData.value.vpn_portal_config?.client_cidr ?? '',
+  set: (value: string) => {
+    localFormData.value.vpn_portal_config ??= {}
+    localFormData.value.vpn_portal_config.client_cidr = value || undefined
+  }
+})
+
+/** 保存校验失败后草稿继续显示，空日志对象被清理时仍能重新编辑。 */
+const consoleLogLevel = computed({
+  get: () => localFormData.value.console_logger?.level ?? '',
+  set: (value: string) => {
+    localFormData.value.console_logger ??= {}
+    localFormData.value.console_logger.level = value || undefined
+  }
+})
+
+/** 新旧日志大小字段共用编辑值，避免修改 size 后仍被已有 size_mb 覆盖。 */
+const fileLogSize = computed({
+  get: () => localFormData.value.file_logger?.size_mb ?? localFormData.value.file_logger?.size,
+  set: (value: number | undefined) => {
+    localFormData.value.file_logger ??= {}
+    if (localFormData.value.file_logger.size_mb !== undefined) {
+      localFormData.value.file_logger.size_mb = value
+      delete localFormData.value.file_logger.size
+    } else {
+      localFormData.value.file_logger.size = value
+    }
+  }
+})
+
 const formRef = ref<FormInstance>()
-const vpnPortalConfig = ref<any>({ client_cidr: '', wireguard_listen: '' })
 const rules = ref<FormRules>({
   hostname: [
     { required: true, trigger: ['blur', 'change'], message: '请输入主机名' },
@@ -2271,6 +2415,10 @@ const compressionAlgorithmOptions = reactive([
   {
     label: 'zstd',
     value: 2
+  },
+  {
+    label: 'lzo（需内核支持）',
+    value: 3
   }
 ])
 // STUN 服务器选项
@@ -2344,9 +2492,15 @@ const generateMachineId = () => {
   localFormData.value.machine_id = uuid
 }
 
-const ipv4Disabled = computed(() => {
-  return localFormData.value.dhcp
+/** 布尔开关兼容已有 CIDR 值，打开表单时不覆盖用户指定的地址段。 */
+const dhcpEnabled = computed({
+  get: () => !!localFormData.value.dhcp,
+  set: (enabled: boolean) => {
+    localFormData.value.dhcp = enabled ? localFormData.value.dhcp || true : false
+  }
 })
+
+const ipv4Disabled = computed(() => !!localFormData.value.dhcp)
 
 // 注释：consoleLoggerVisible 未使用，保留以备将来使用
 // const consoleLoggerVisible = computed(() => {
@@ -2390,18 +2544,18 @@ watch(
   }
 )
 watch(
-  () => localFormData.value.local_private_key,
+  () => localFormData.value.secure_mode?.local_private_key,
   (value) => {
     if (value === '') {
-      localFormData.value.local_private_key = undefined
+      localFormData.value.secure_mode.local_private_key = undefined
     }
   }
 )
 watch(
-  () => localFormData.value.local_public_key,
+  () => localFormData.value.secure_mode?.local_public_key,
   (value) => {
     if (value === '') {
-      localFormData.value.local_public_key = undefined
+      localFormData.value.secure_mode.local_public_key = undefined
     }
   }
 )
@@ -2424,7 +2578,7 @@ watch(
 watch(
   () => localFormData.value.stun_servers,
   (value) => {
-    if (!value || value.length === 0 || value === '') {
+    if (value === '') {
       localFormData.value.stun_servers = undefined
     }
   }
@@ -2432,7 +2586,7 @@ watch(
 watch(
   () => localFormData.value.stun_servers_v6,
   (value) => {
-    if (!value || value.length === 0 || value === '') {
+    if (value === '') {
       localFormData.value.stun_servers_v6 = undefined
     }
   }
@@ -2539,10 +2693,10 @@ watch(
   }
 )
 watch(
-  () => localFormData.value.flags.ipv6_public_addr_prefix,
+  () => localFormData.value.ipv6_public_addr_prefix,
   (value) => {
     if (value === '') {
-      localFormData.value.flags.ipv6_public_addr_prefix = undefined
+      localFormData.value.ipv6_public_addr_prefix = undefined
     }
   }
 )
@@ -2551,29 +2705,6 @@ watch(
   (value) => {
     if (!value || value === '') {
       localFormData.value.routes = undefined
-    }
-  }
-)
-watch(
-  () => vpnPortalConfig.value.client_cidr,
-  (value) => {
-    if (value) {
-      if (!localFormData.value.vpn_portal_config) {
-        localFormData.value.vpn_portal_config = { client_cidr: '', wireguard_listen: '' }
-      }
-      localFormData.value.vpn_portal_config.client_cidr = vpnPortalConfig.value.client_cidr
-    }
-  }
-)
-watch(
-  () => vpnPortalConfig.value.wireguard_listen,
-  (value) => {
-    if (value) {
-      if (!localFormData.value.vpn_portal_config) {
-        localFormData.value.vpn_portal_config = { client_cidr: '', wireguard_listen: '' }
-      }
-      localFormData.value.vpn_portal_config.wireguard_listen =
-        vpnPortalConfig.value.wireguard_listen
     }
   }
 )
@@ -2607,11 +2738,6 @@ onMounted(async () => {
   ) {
     proxyNetwork.value = localFormData.value.proxy_network.map((p) => p.cidr)
   }
-  if (localFormData.value.vpn_portal_config) {
-    vpnPortalConfig.value.client_cidr = localFormData.value.vpn_portal_config.client_cidr || ''
-    vpnPortalConfig.value.wireguard_listen =
-      localFormData.value.vpn_portal_config.wireguard_listen || ''
-  }
   if (!localFormData.value.hostname) {
     localFormData.value.hostname = await getHostname()
   }
@@ -2622,8 +2748,11 @@ onMounted(async () => {
   await getStunServers()
 })
 
+/** 调整节点列表时保留既有节点的公钥等扩展字段。 */
 const peerChange = (value: string[]) => {
-  localFormData.value.peer = value.map((v) => ({ uri: v }))
+  localFormData.value.peer = value.map(
+    (v) => localFormData.value.peer?.find((p) => p.uri === v) ?? { uri: v }
+  )
 }
 
 const compressChange = (value: string) => {
@@ -2631,8 +2760,11 @@ const compressChange = (value: string) => {
     localFormData.value.flags.data_compress_algo = undefined
   }
 }
+/** 调整子网列表时保留映射地址和访问规则。 */
 const proxyNetworkChange = (value: string[]) => {
-  localFormData.value.proxy_network = value.map((v) => ({ cidr: v }))
+  localFormData.value.proxy_network = value.map(
+    (v) => localFormData.value.proxy_network?.find((p) => p.cidr === v) ?? { cidr: v }
+  )
 }
 
 const addPortForward = () => {

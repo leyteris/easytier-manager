@@ -27,7 +27,15 @@ import { invoke } from '@tauri-apps/api/core'
 import { attachConsole, error, info } from '@tauri-apps/plugin-log'
 import { Command } from '@tauri-apps/plugin-shell'
 import { useClipboard } from '@vueuse/core'
-import { ElMessage, ElMessageBox, ElNotification, ElOption, ElSelect, ElTree } from 'element-plus'
+import {
+  ElButton,
+  ElMessage,
+  ElMessageBox,
+  ElNotification,
+  ElOption,
+  ElSelect,
+  ElTree
+} from 'element-plus'
 import * as toml from 'smol-toml'
 import { computed, onActivated, onDeactivated, onMounted, reactive, ref, unref, watch } from 'vue'
 // 启用 TargetKind::Webview 后，这个函数将把日志打印到浏览器控制台
@@ -44,6 +52,24 @@ const disabledAutoMetricAdapter = ref<string | null>(null)
 const MonacoEditRef = ref()
 const wordWrap = ref('off')
 const nodeInfo = ref<any>({})
+/** 出口查询独立于实例状态，内核轮询及实例切换不覆盖本机查询快照。 */
+const egressIp = ref<{ ip: string; family: string; source: string; checkedAt: number } | null>(null)
+const egressLoading = ref(false)
+const egressError = ref('')
+
+/** 仅响应用户点击，保留上次成功结果并明确显示刷新失败。 */
+async function refreshEgressIp() {
+  if (egressLoading.value) return
+  egressLoading.value = true
+  egressError.value = ''
+  try {
+    egressIp.value = await invoke('query_egress_ip')
+  } catch (error) {
+    egressError.value = String(error)
+  } finally {
+    egressLoading.value = false
+  }
+}
 const peerInfo = ref<PeerInfo[]>([])
 const isNodeInfoLooping = ref(false)
 const isPeerInfoLooping = ref(false)
@@ -85,6 +111,33 @@ const nodeInfoSchema = reactive<DescriptionsSchema[]>([
   {
     field: 'stun_info.udp_nat_type',
     label: t('easytier.nat_type')
+  },
+  {
+    field: 'egress_ip',
+    label: '出口 IP',
+    slots: {
+      default: () => (
+        <div class="flex flex-col gap-6px" aria-live="polite">
+          <div class="flex items-center flex-wrap gap-8px">
+            <span class="break-all">{egressIp.value?.ip || '未查询'}</span>
+            <ElButton size="small" loading={egressLoading.value} onClick={refreshEgressIp}>
+              {egressIp.value ? '刷新' : '获取'}
+            </ElButton>
+          </div>
+          <span class="text-12px text-[var(--el-text-color-secondary)]">
+            {egressIp.value
+              ? `${egressIp.value.family} · ${egressIp.value.source} · ${new Date(egressIp.value.checkedAt).toLocaleTimeString()}`
+              : '本机系统路由出口，不使用应用代理'}
+          </span>
+          {egressError.value && (
+            <span class="text-12px text-[var(--el-color-danger)]">
+              更新失败：{egressError.value}
+              {egressIp.value ? '（显示上次结果）' : ''}
+            </span>
+          )}
+        </div>
+      )
+    }
   }
   // {
   //   field: 'proxy_cidrs',

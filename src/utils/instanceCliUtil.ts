@@ -1,6 +1,7 @@
 import { CONFIG_PATH } from '@/constants/easytier'
 import { error, info } from '@tauri-apps/plugin-log'
-import { readFileContent, writeFileContent } from './fileUtil'
+import { readFileContent } from './fileUtil'
+import { saveCompatibleConfig } from './configCheckUtil'
 import { runEasyTierCli } from './shellUtil'
 import * as toml from 'smol-toml'
 
@@ -54,11 +55,11 @@ export async function updateTomlConfig(
     const content = (await readFileContent(CONFIG_PATH + '/' + configFileName)) as string
     const config = toml.parse(content) as any
     mutate(config)
-    await writeFileContent(CONFIG_PATH + '/' + configFileName, toml.stringify(config))
+    await saveCompatibleConfig(configFileName, toml.stringify(config))
     info(`配置回写成功：${configFileName}`)
     return true
   } catch (e: any) {
-    error(`配置回写失败(${configFileName}):${JSON.stringify(e)}`)
+    error(`配置回写失败(${configFileName})，原配置已保留`)
     return false
   }
 }

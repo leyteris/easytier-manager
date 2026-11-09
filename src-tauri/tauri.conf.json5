@@ -4,7 +4,7 @@
   // 应用程序名称
   "productName": "easytier-manager-pro",
   // 应用程序版本号
-  "version": "3.6.0",
+  "version": "3.7.0",
   // 应用程序唯一标识符
   "identifier": "easytier-manager-pro",
   // 构建相关配置
@@ -23,6 +23,8 @@
     // 窗口配置
     "windows": [
       {
+        // 在 setup 中按此配置创建窗口，附加本地资源的禁止缓存响应头
+        "create": false,
         // 窗口标题
         "title": "EasyTier 管理器 Pro",
         // 窗口宽度（像素）
